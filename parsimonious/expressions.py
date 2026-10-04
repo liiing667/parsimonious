@@ -209,6 +209,11 @@ class Expression(StrAndRepr):
             # we've seen so far), as they're hard to track down for a human.
             # Perhaps we could include the unnamed subexpressions later as
             # auxiliary info.
+            if pos > error.pos:
+                # A new farthest failure position: forget the rules that
+                # failed earlier and start collecting candidates anew.
+                error._expected.clear()
+            error._expected.add(self)
             error.expr = self
             error.pos = pos
 

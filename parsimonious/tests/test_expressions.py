@@ -245,6 +245,105 @@ class ErrorReportingTests(TestCase):
             # didn't match". That's not the greatest. Fix that, then fix this.
             self.assertTrue(str(error).endswith(r"""didn't match at 'GOO' (line 2, column 4)."""))
 
+    def test_expected_single_rule(self):
+        """``expected`` should contain the one named rule that failed at the
+        farthest position."""
+        grammar = Grammar("""
+            bold_text = open_parens text close_parens
+            open_parens = "(("
+            text = ~"[a-zA-Z]+"
+            close_parens = "))"
+            """)
+        try:
+            grammar.parse('((fred!!')
+        except ParseError as error:
+            self.assertEqual(error.expected, [grammar['close_parens']])
+            # A single candidate keeps the historical message format:
+            self.assertEqual(str(error), "Rule 'close_parens' didn't match at '!!' (line 1, column 7).")
+
+    def test_expected_multiple_rules(self):
+        """``expected`` should collect every named rule tried at the farthest
+        failure position, and ``str()`` should list them."""
+        grammar = Grammar("""
+            expr = term ("+" term)*
+            term = number / paren
+            paren = "(" expr ")"
+            number = ~"[0-9]+"
+            """)
+        try:
+            grammar.parse('(1+')
+        except ParseError as error:
+            self.assertEqual(error.pos, 3)
+            self.assertEqual([expr.name for expr in error.expected],
+                             ['number', 'paren', 'term'])
+            self.assertEqual(str(error), "Rule 'number', 'paren' or 'term' didn't match at '' (line 1, column 4).")
+
+    def test_expected_sorted_and_deduplicated(self):
+        """``expected`` should be deduplicated and sorted by rule name, even
+        when rules fail at the farthest position in another order."""
+        grammar = Grammar("""
+            thing = zebra / apple / mango
+            zebra = "z"
+            apple = "a"
+            mango = "m"
+            """)
+        try:
+            grammar.parse('x')
+        except ParseError as error:
+            self.assertEqual(error.pos, 0)
+            self.assertEqual([expr.name for expr in error.expected],
+                             ['apple', 'mango', 'thing', 'zebra'])
+            # ``expr`` keeps pointing at the last rule recorded at that
+            # position:
+            self.assertEqual(error.expr, grammar['thing'])
+
+    def test_expected_deduplicates_repeated_failures(self):
+        """A rule failing several times at the farthest position should show
+        up in ``expected`` only once."""
+        grammar = Grammar("""
+            thing = num / num
+            num = ~"[0-9]+"
+            """)
+        try:
+            grammar.parse('x')
+        except ParseError as error:
+            self.assertEqual([expr.name for expr in error.expected],
+                             ['num', 'thing'])
+
+    def test_expected_falling_back_to_anonymous(self):
+        """If no named rule failed at the farthest position, ``expected``
+        should fall back to the anonymous expression that did."""
+        grammar = Grammar(r"""
+            whee_lah = whee "\n" lah "\n"
+            whee = "whee"
+            lah = "lah"
+            """)
+        try:
+            grammar.parse('whee\nlahGOO')
+        except ParseError as error:
+            self.assertEqual(error.expected, [error.expr])
+            self.assertEqual(error.expected[0].name, '')
+
+    def test_error_message_window_stops_at_newline(self):
+        """The text snippet in error messages should never contain a line
+        ending; it gets cut off at the first one."""
+        grammar = Grammar(r"""ab = "a" "b" """)
+        try:
+            grammar.parse('aXY\nZZZaXYaXYaXYaXY')
+        except ParseError as error:
+            self.assertEqual(error.pos, 1)
+            self.assertEqual(error.text_window(), 'XY')
+            self.assertTrue(str(error).endswith("didn't match at 'XY' (line 1, column 2)."))
+            self.assertNotIn('\n', str(error))
+
+    def test_error_message_window_stops_at_carriage_return(self):
+        """CR and CRLF line endings should cut off the text snippet too."""
+        grammar = Grammar(r"""ab = "a" "b" """)
+        for text in ['aXY\rZZZ', 'aXY\r\nZZZ']:
+            try:
+                grammar.parse(text)
+            except ParseError as error:
+                self.assertEqual(error.text_window(), 'XY')
 
 class RepresentationTests(TestCase):
     """Tests for str(), unicode(), and repr() of expressions"""

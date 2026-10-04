@@ -1,3 +1,4 @@
+import re
 from textwrap import dedent
 
 from parsimonious.utils import StrAndRepr
@@ -18,13 +19,49 @@ class ParseError(StrAndRepr, ParsimoniousError):
         self.text = text
         self.pos = pos
         self.expr = expr
+        # Every named rule (plus, failing that, anonymous expressions) that
+        # was tried at the farthest failure position. ``expected`` presents
+        # this set deduplicated and sorted.
+        self._expected = set()
+
+    @property
+    def expected(self):
+        """The expressions that failed to match at ``self.pos``.
+
+        Named rules are preferred: anonymous subexpressions are only reported
+        when no named rule failed at the farthest failure position. The
+        result is deduplicated and ordered by rule name.
+        """
+        named = [expr for expr in self._expected if expr.name]
+        candidates = named if named else list(self._expected)
+        return sorted(candidates, key=lambda expr: expr.name)
+
+    def text_window(self):
+        """Return the up-to-20-char snippet of the text starting at ``pos``.
+
+        The snippet is cut off at the first line ending so error messages
+        never span more than one line.
+        """
+        window = self.text[self.pos:self.pos + 20]
+        if isinstance(window, (str, bytes)):
+            line_ending = re.search(rb'\r\n?|\n' if isinstance(window, bytes)
+                                    else r'\r\n?|\n', window)
+            if line_ending is not None:
+                window = window[:line_ending.start()]
+        return window
 
     def __str__(self):
-        rule_name = (("'%s'" % self.expr.name) if self.expr.name else
-                     str(self.expr))
+        expected = self.expected
+        if len(expected) > 1:
+            rule_names = [("'%s'" % expr.name) if expr.name else str(expr)
+                          for expr in expected]
+            rule_name = ', '.join(rule_names[:-1]) + ' or ' + rule_names[-1]
+        else:
+            rule_name = (("'%s'" % self.expr.name) if self.expr.name else
+                         str(self.expr))
         return "Rule %s didn't match at '%s' (line %s, column %s)." % (
                 rule_name,
-                self.text[self.pos:self.pos + 20],
+                self.text_window(),
                 self.line(),
                 self.column())
 
@@ -53,7 +90,7 @@ class ParseError(StrAndRepr, ParsimoniousError):
 class LeftRecursionError(ParseError):
     def __str__(self):
         rule_name = self.expr.name if self.expr.name else str(self.expr)
-        window = self.text[self.pos:self.pos + 20]
+        window = self.text_window()
         return dedent(f"""
             Left recursion in rule {rule_name!r} at {window!r} (line {self.line()}, column {self.column()}).
 
@@ -71,7 +108,7 @@ class IncompleteParseError(ParseError):
     def __str__(self):
         return "Rule '%s' matched in its entirety, but it didn't consume all the text. The non-matching portion of the text begins with '%s' (line %s, column %s)." % (
                 self.expr.name,
-                self.text[self.pos:self.pos + 20],
+                self.text_window(),
                 self.line(),
                 self.column())
 
