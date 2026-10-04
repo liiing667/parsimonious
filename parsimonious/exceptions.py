@@ -18,15 +18,50 @@ class ParseError(StrAndRepr, ParsimoniousError):
         self.text = text
         self.pos = pos
         self.expr = expr
+        # Expressions that failed at the farthest failure position. Named
+        # rules are preferred; anonymous ones only hang around until a named
+        # rule fails at that position (see Expression.match_core()).
+        self._expected = set()
+
+    @property
+    def expected(self):
+        """The distinct rules that failed at the farthest failure position.
+
+        Named rules are always reported in favor of anonymous expressions;
+        anonymous expressions appear only when no named rule failed at that
+        position. The result is sorted by rule name (anonymous expressions
+        by their textual representation).
+        """
+        return sorted(self._expected, key=lambda expr: expr.name or str(expr))
 
     def __str__(self):
-        rule_name = (("'%s'" % self.expr.name) if self.expr.name else
-                     str(self.expr))
+        expected = self.expected
+        if len(expected) > 1:
+            rule_name = 'one of %s' % ', '.join(
+                ("'%s'" % expr.name) if expr.name else str(expr)
+                for expr in expected)
+        else:
+            # Keep the historical format (and .expr) for a single candidate.
+            rule_name = (("'%s'" % self.expr.name) if self.expr.name else
+                         str(self.expr))
         return "Rule %s didn't match at '%s' (line %s, column %s)." % (
                 rule_name,
-                self.text[self.pos:self.pos + 20],
+                self._text_window(),
                 self.line(),
                 self.column())
+
+    def _text_window(self):
+        """Return the bit of ``text`` shown in error messages.
+
+        The window is at most 20 characters long and stops at the first
+        newline so error messages never span more than one line.
+        """
+        window = self.text[self.pos:self.pos + 20]
+        if isinstance(window, str):
+            newline = window.find('\n')
+            if newline != -1:
+                window = window[:newline]
+        return window
 
     # TODO: Add line, col, and separated-out error message so callers can build
     # their own presentation.
@@ -53,7 +88,7 @@ class ParseError(StrAndRepr, ParsimoniousError):
 class LeftRecursionError(ParseError):
     def __str__(self):
         rule_name = self.expr.name if self.expr.name else str(self.expr)
-        window = self.text[self.pos:self.pos + 20]
+        window = self._text_window()
         return dedent(f"""
             Left recursion in rule {rule_name!r} at {window!r} (line {self.line()}, column {self.column()}).
 
@@ -71,7 +106,7 @@ class IncompleteParseError(ParseError):
     def __str__(self):
         return "Rule '%s' matched in its entirety, but it didn't consume all the text. The non-matching portion of the text begins with '%s' (line %s, column %s)." % (
                 self.expr.name,
-                self.text[self.pos:self.pos + 20],
+                self._text_window(),
                 self.line(),
                 self.column())
 

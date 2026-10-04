@@ -245,6 +245,73 @@ class ErrorReportingTests(TestCase):
             # didn't match". That's not the greatest. Fix that, then fix this.
             self.assertTrue(str(error).endswith(r"""didn't match at 'GOO' (line 2, column 4)."""))
 
+    def test_expected_single_candidate(self):
+        """``expected`` should hold the rule that failed at the farthest
+        position, and ``str()`` should keep its historical format."""
+        grammar = Grammar("""
+            bold_text = open_parens text close_parens
+            open_parens = "(("
+            text = ~"[a-zA-Z]+"
+            close_parens = "))"
+            """)
+        try:
+            grammar.parse('((fred!!')
+        except ParseError as error:
+            self.assertEqual(error.expected, [grammar['close_parens']])
+            self.assertEqual(str(error), "Rule 'close_parens' didn't match at '!!' (line 1, column 7).")
+
+    def test_expected_multiple_candidates(self):
+        """All named rules that failed at the farthest position should be
+        collected, deduplicated, and sorted by name."""
+        grammar = Grammar("""
+            object = "{" (pair / number / pair) "}"
+            pair = "a"
+            number = "b"
+            """)
+        try:
+            grammar.parse('{!')
+        except ParseError as error:
+            self.assertEqual(error.pos, 1)
+            # `pair` fails twice at pos 1 but shows up only once:
+            self.assertEqual(error.expected, [grammar['number'], grammar['pair']])
+            self.assertEqual(str(error), "Rule one of 'number', 'pair' didn't match at '!' (line 1, column 2).")
+
+    def test_expected_anonymous_fallback(self):
+        """If no named rule failed at the farthest position, ``expected``
+        should fall back to the anonymous expressions that did."""
+        grammar = Grammar(r'''sequence = "chitty" "bang"''')
+        try:
+            grammar.parse('chittybong')
+        except ParseError as error:
+            self.assertEqual(error.pos, 6)
+            self.assertEqual(error.expected, [grammar['sequence'].members[1]])
+
+    def test_error_window_stops_at_newline(self):
+        """The text window in error messages should stop at the first
+        newline so messages stay on a single line."""
+        grammar = Grammar(r"""
+            lines = word "\n" tail
+            word = ~"[a-z]+"
+            tail = "TAIL"
+            """)
+        try:
+            grammar.parse('abc\nNOPE\nmore')
+        except ParseError as error:
+            self.assertEqual(str(error), "Rule 'tail' didn't match at 'NOPE' (line 2, column 1).")
+
+    def test_incomplete_parse_window_stops_at_newline(self):
+        """The IncompleteParseError text window should stop at the first
+        newline as well."""
+        grammar = Grammar(r"""
+            lines = word tail
+            word = ~"[a-z]+"
+            tail = "TAIL"
+            """)
+        try:
+            grammar.parse('abcTAILextra\nmore')
+        except IncompleteParseError as error:
+            self.assertEqual(str(error), "Rule 'lines' matched in its entirety, but it didn't consume all the text. The non-matching portion of the text begins with 'extra' (line 1, column 8).")
+
 
 class RepresentationTests(TestCase):
     """Tests for str(), unicode(), and repr() of expressions"""

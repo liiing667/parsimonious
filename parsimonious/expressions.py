@@ -207,8 +207,20 @@ class Expression(StrAndRepr):
                 self.name or getattr(error.expr, 'name', None) is None):
             # Don't bother reporting on unnamed expressions (unless that's all
             # we've seen so far), as they're hard to track down for a human.
-            # Perhaps we could include the unnamed subexpressions later as
-            # auxiliary info.
+            if pos > error.pos:
+                # A new farthest failure position: candidates recorded at
+                # earlier positions are no longer relevant.
+                error._expected.clear()
+            if self.name:
+                if not getattr(error.expr, 'name', None):
+                    # Named rules crowd out any anonymous placeholders
+                    # recorded at this position.
+                    error._expected.clear()
+                error._expected.add(self)
+            else:
+                # Record anonymous expressions only until a named rule fails
+                # at this position.
+                error._expected.add(self)
             error.expr = self
             error.pos = pos
 
